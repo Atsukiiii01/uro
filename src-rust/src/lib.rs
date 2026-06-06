@@ -7,7 +7,8 @@ fn extract_security_intel(js_content: &str) -> PyResult<(Vec<String>, Vec<(Strin
     
     // Hardened Regex hunting for exact structural signatures, not just loose keywords
     let jwt_regex = Regex::new(r#"ey[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}"#).unwrap();
-    let aws_regex = Regex::new(r#"(?i)(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}"#).unwrap();
+    // Hardened AWS Regex: Strictly uppercase, exactly 20 characters, locked by word boundaries
+    let aws_regex = Regex::new(r#"\b(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}\b"#).unwrap();
     let high_entropy_token = Regex::new(r#"(?i)(?:api_key|secret|token|authorization)["\s]*:[\s]*["']([a-zA-Z0-9\-_]{32,})["']"#).unwrap();
 
     let mut endpoints = Vec::new();
