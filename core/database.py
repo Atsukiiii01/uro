@@ -17,7 +17,6 @@ class DeltaDB:
         """Creates the minimalist tables required for Delta tracking."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Track root domains (e.g., example.com)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS domains (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,8 +24,6 @@ class DeltaDB:
                     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            # Track subdomains (e.g., api.dev.example.com)
-            # The UNIQUE constraint on subdomain allows us to catch Deltas easily.
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS subdomains (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,8 +35,78 @@ class DeltaDB:
                     FOREIGN KEY(domain_id) REFERENCES domains(id)
                 )
             ''')
+            # NEW: Track active HTTP/HTTPS endpoints found on subdomains
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS web_services (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subdomain_id INTEGER,
+                    url TEXT UNIQUE NOT NULL,
+                    status_code INTEGER,
+                    content_length INTEGER,
+                    title TEXT,
+                    discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(subdomain_id) REFERENCES subdomains(id)
+                )
+            ''')
             conn.commit()
             logging.info("Database initialized.")
+
+            # Track endpoints discovered inside JS or crawled links
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS endpoints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    web_service_id INTEGER,
+                    path TEXT NOT NULL,
+                    source TEXT NOT NULL, -- e.g., "js_file", "html_crawl"
+                    discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(web_service_id, path),
+                    FOREIGN KEY(web_service_id) REFERENCES web_services(id)
+                )
+            ''')
+            
+            # Track raw secrets or keys found during analysis
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS leaked_secrets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    web_service_id INTEGER,
+                    type TEXT NOT NULL, -- e.g., "API_Key", "JWT", "Firebase"
+                    secret_value TEXT NOT NULL,
+                    location TEXT NOT NULL, -- URL of the specific JS file
+                    discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(web_service_id, secret_value),
+                    FOREIGN KEY(web_service_id) REFERENCES web_services(id)
+                )
+            ''')
+
+    def add_endpoint(self, web_service_id: int, path: str, source: str):
+        """Stores a unique discovered path relative to a web service."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO endpoints (web_service_id, path, source)
+                VALUES (?, ?, ?)
+            ''', (web_service_id, path, source))
+            conn.commit()
+
+    def add_secret(self, web_service_id: int, secret_type: str, value: str, location: str):
+        """Logs a potential credential leakage or hardcoded configuration token."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO leaked_secrets (web_service_id, type, secret_value, location)
+                VALUES (?, ?, ?, ?)
+            ''', (web_service_id, secret_type, value, location))
+            conn.commit()
+
+    def add_web_service(self, subdomain_id: int, url: str, status_code: int, content_length: int, title: str):
+        """Stores a verified live web asset."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO web_services (subdomain_id, url, status_code, content_length, title)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (subdomain_id, url, status_code, content_length, title))
+            conn.commit()
 
     def add_domain(self, domain: str) -> int:
         """Adds a root domain. Returns the domain ID."""
