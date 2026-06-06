@@ -5,7 +5,7 @@ from core.database import DeltaDB
 from modules.recon import ReconEngine
 from modules.prober import LiveProber
 from modules.js_analyzer import JSAnalyzer
-from modules.ai_triage import AITriageAgent
+from modules.ai_triage import SupervisorFabric
 
 # Silence massive debug logs from third-party libraries
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -82,28 +82,32 @@ def cmd_scan(args):
 
 
 def cmd_triage(args):
-    """Executes the Local AI Reasoning engine on extracted data."""
-    db = DeltaDB()
-    target_url = args.url
+    """Executes the Local AI Triage Agent against a specific target."""
+    target = args.target
+    logging.info(f"[*] Initializing Triage Engine for target: {target}")
     
+    db = DeltaDB()
     with db._get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT id FROM web_services WHERE url = ?', (target_url,))
+        # Use LIKE for fuzzy matching to prevent exact-string CLI errors
+        cursor.execute('SELECT id, url FROM web_services WHERE url LIKE ?', (f"%{target}%",))
         result = cursor.fetchone()
         
     if not result:
-        print(f"[-] Target {target_url} not found in database. Run 'scan' first.")
-        sys.exit(1)
-        
-    target_id = result[0]
-    print(f"\n[*] Launching Local AI Triage against: {target_url} (ID: {target_id})")
+        print(f"[-] Target {target} not found in database. Run 'scan' first.")
+        return
+
+    ws_id, exact_url = result[0], result[1]
+    print(f"\n[*] Launching Local AI Triage against: {exact_url} (ID: {ws_id})")
     
-    agent = AITriageAgent()
-    report = agent.run(web_service_id=target_id, url=target_url)
+    # Initialize the multi-agent supervisor fabric
+    from modules.ai_triage import SupervisorFabric
+    agent = SupervisorFabric()
     
-    print("\n" + "="*60)
+    report = agent.run(web_service_id=ws_id, url=exact_url)
+    print("\n============================================================")
     print(" VULNERABILITY ASSESSMENT & ATTACK PATHS")
-    print("="*60)
+    print("============================================================")
     print(report)
 
 
