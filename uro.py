@@ -1,9 +1,11 @@
 import argparse
 import logging
 import sys
+import os
+import re
 from core.database import DeltaDB
 from core.config import ConfigManager
-from modules.ai_triage import SupervisorFabric
+from modules.ai_triage import TriageAgent
 from modules.recon import ReconEngine
 from modules.prober import LiveProber
 from modules.js_analyzer import JSAnalyzer
@@ -27,7 +29,7 @@ def cmd_scan(args):
     engine = ReconEngine(target_domain)
     discovered_assets = engine.run_all()
     
-    # FIX: Explicitly append the direct target to make sure standalone hosts scan
+    # Explicitly append the direct target to make sure standalone hosts scan
     discovered_assets.add(target_domain)
 
     new_assets_to_probe = {}
@@ -67,7 +69,13 @@ def cmd_scan(args):
             with db._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('SELECT id FROM web_services WHERE url = ?', (service["url"],))
-                service_id = cursor.fetchone()[0]
+                row = cursor.fetchone()
+
+            if row is None:
+                logging.error(f"[!] Could not retrieve service ID for {service['url']} — skipping JS analysis")
+                continue
+                
+            service_id = row[0]
 
             print(f"    └── Parsing scripts on {service['url']}...")
             analyzer = JSAnalyzer(service["url"])
@@ -117,7 +125,7 @@ def cmd_triage(args):
     ws_id, exact_url = result[0], result[1]
     logging.info(f"[*] Launching Local AI Triage against: {exact_url} (ID: {ws_id})")
     
-    agent = SupervisorFabric()
+    agent = TriageAgent()
     report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
     
     print("\n============================================================")
@@ -126,7 +134,6 @@ def cmd_triage(args):
     print(report)
 
 def cmd_hunt(args):
-    """Batch processes the attack surface, feeding high-value targets to the Triage Agent."""
     initialize_profile(args.profile)
     cfg = ConfigManager()
     
@@ -141,7 +148,6 @@ def cmd_hunt(args):
     db = DeltaDB()
     with db._get_connection() as conn:
         cursor = conn.cursor()
-        # Filter 1: Only triage assets that are alive (200, 401, 403) and have actual data mapped to them
         cursor.execute('''
             SELECT DISTINCT w.id, w.url 
             FROM web_services w
@@ -157,7 +163,7 @@ def cmd_hunt(args):
         return
 
     logging.info(f"[*] Batch Orchestrator engaged. Queuing {len(viable_targets)} high-value targets for AI Triage.")
-    agent = SupervisorFabric()
+    agent = TriageAgent()
 
     for ws_id, exact_url in viable_targets:
         print(f"\n============================================================")
@@ -168,9 +174,12 @@ def cmd_hunt(args):
             print(report)
         except Exception as e:
             logging.error(f"[-] Triage Agent crashed on {exact_url}: {e}")
-            continue    
+            continue
 
 def main():
+    if os.getenv("LANGCHAIN_TRACING_V2") == "true":
+        logging.warning("[!] LangSmith tracing is ENABLED. Recon data will be uploaded to smith.langchain.com.")
+
     parser = argparse.ArgumentParser(description="Autonomous Offensive Security OS")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -184,13 +193,25 @@ def main():
     triage_parser.add_argument("--profile", "-p", help="Path to YAML operational profile", required=True)
     triage_parser.set_defaults(func=cmd_triage)
 
-    # Hunt Command Configuration
     hunt_parser = subparsers.add_parser("hunt", help="Batch triage all viable, data-rich targets in the database")
     hunt_parser.add_argument("--profile", "-p", help="Path to YAML operational profile", required=True)
     hunt_parser.set_defaults(func=cmd_hunt)
 
     args = parser.parse_args()
-    args.func(args)
+
+    # A-7: Enforce domain validation before allowing the scan to execute
+    if args.command == "scan":
+        domain_re = re.compile(r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$')
+        if not domain_re.match(args.target):
+            logging.error(f"[-] Invalid domain format: {args.target}")
+            sys.exit(1)
+
+    # A-6: Global SIGINT handler
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        logging.warning("\n[!] SIGINT received. Gracefully shutting down and preserving database state...")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
