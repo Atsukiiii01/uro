@@ -89,12 +89,11 @@ class DeltaDB:
             conn.commit()
 
     def add_secret(self, web_service_id: int, secret_type: str, value: str, location: str):
-        """Logs a potential credential leakage or hardcoded configuration token."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR IGNORE INTO leaked_secrets (web_service_id, type, secret_value, location)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO leaked_secrets (web_service_id, type, secret_value, location, discovered_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
             ''', (web_service_id, secret_type, value, location))
             conn.commit()
 
