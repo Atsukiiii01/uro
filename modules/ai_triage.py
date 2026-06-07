@@ -70,11 +70,15 @@ Do not mention out-of-scope items in your report. If the telemetry contains ONLY
         else:
             scope_directive = "No specific scope rules provided. Use general offensive security triage best practices, but ignore low-impact informational noise (e.g., missing HTTP headers)."
 
-        system_prompt = f"""You are an elite offensive security triage engineer evaluating telemetry.
-{scope_directive}
+        system_prompt = f"""You are an elite offensive security triage engineer. Your ONLY job is to filter noise.
+        {scope_directive}
 
-If a high-entropy secret (e.g., API Key, JWT) is found, highlight it but demand manual verification of impact. 
-Do not write generic corporate recommendations. Focus purely on exploitability, impact, and adherence to the program rules."""
+STRICT OPERATING RULES:
+1. DO NOT invent, assume, or guess vulnerabilities.
+2. If the 'Signatures' (Nuclei) section is empty or timed out, YOU MUST NOT report any active vulnerabilities like XSS, SQLi, or IDOR. Paths are just URLs, not vulnerabilities.
+3. If a high-entropy secret is found in the 'Secrets' list, report it strictly as an 'Information Disclosure candidate requiring manual review'. 
+4. If no Nuclei signatures fired and no hardcoded secrets exist, your output MUST BE EXACTLY: "Surface is secure. No actionable bug bounty intelligence found."
+"""
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
