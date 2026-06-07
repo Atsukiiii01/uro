@@ -1,84 +1,83 @@
 import subprocess
-import shutil
 import json
-import os
 import logging
+import shutil
+from typing import List, Dict
+from core.config import ConfigManager
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-class GoToolWrapper:
+class GoWrapper:
     def __init__(self):
-        """Locates pre-installed ProjectDiscovery Go binaries, prioritizing absolute Homebrew paths to avoid Python library name collisions."""
-        # Absolute pathing for Apple Silicon Homebrew installations
-        homebrew_httpx = "/opt/homebrew/bin/httpx"
-        homebrew_nuclei = "/opt/homebrew/bin/nuclei"
+        cfg = ConfigManager()
+        self.cmd_headers = []
+        for key, value in cfg.headers.items():
+            self.cmd_headers.extend(["-H", f"{key}: {value}"])
+        rps = cfg.rate_limit
+        self.rate_limit_args = ["-rl", str(rps)] if rps > 0 else []
 
-        if os.path.exists(homebrew_httpx):
-            self.httpx_path = homebrew_httpx
-        else:
-            self.httpx_path = shutil.which("httpx")
-
-        if os.path.exists(homebrew_nuclei):
-            self.nuclei_path = homebrew_nuclei
-        else:
-            self.nuclei_path = shutil.which("nuclei")
-        
-        if not self.httpx_path or "site-packages" in self.httpx_path or "bin/httpx" not in self.httpx_path:
-            # If it falls back to a python env binary, flag it
-            logging.warning("[GoWrapper] ProjectDiscovery 'httpx' binary is being masked by a Python package. Ensure Go version is installed.")
-        
-        logging.info(f"[GoWrapper] Initialized httpx path: {self.httpx_path}")
-        logging.info(f"[GoWrapper] Initialized nuclei path: {self.nuclei_path}")
-
-    def run_httpx_probe(self, target_url: str) -> dict:
-        """
-        Executes Go 'httpx' to get precise technology fingerprints and titles.
-        Bypasses python's socket limitations using native Go network concurrency.
-        """
-        if not self.httpx_path:
-            return {"error": "httpx binary missing"}
-
-        cmd = [self.httpx_path, "-u", target_url, "-title", "-tech-detect", "-status-code", "-json", "-silent"]
+    def run_httpx(self, target_url: str) -> List[str]:
+        if not shutil.which("httpx"):
+            logging.error("[-] httpx binary missing from system PATH.")
+            return []
+            
+        cmd = ["httpx", "-silent", "-u", target_url, "-tech-detect", "-json"]
+        cmd.extend(self.cmd_headers)
+        cmd.extend(self.rate_limit_args)
         
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            if result.returncode == 0 and result.stdout:
-                return json.loads(result.stdout.strip())
-        except subprocess.TimeoutExpired:
-            logging.error(f"[GoWrapper] httpx timed out scanning {target_url}")
-        except Exception as e:
-            logging.error(f"[GoWrapper] httpx error: {str(e)}")
+            if result.returncode != 0:
+                logging.warning(f"[!] httpx returned error code: {result.returncode}")
+                return []
             
-        return {}
-
-    def run_nuclei_scan(self, target_url: str, tags: str = "tech") -> list:
-        """
-        Executes Go 'nuclei' engine targeting low-impact passive validation profiles.
-        Returns verified signature matches to destroy LLM hallucinations.
-        """
-        if not self.nuclei_path:
+            stack = []
+            for line in result.stdout.strip().split('\n'):
+                if not line: continue
+                try:
+                    data = json.loads(line)
+                    # FIXED: Account for modern 'tech' key and fallback to legacy string array
+                    if "tech" in data and data["tech"]:
+                        stack.extend(data["tech"])
+                    elif "technologies" in data and data["technologies"]:
+                        stack.extend(data["technologies"])
+                except json.JSONDecodeError:
+                    continue
+            return list(set(stack))
+        except Exception as e:
+            logging.error(f"[-] httpx execution failed: {e}")
             return []
 
-        # We keep scans strictly focused using designated template tags to optimize runtime
-        cmd = [
-            self.nuclei_path, 
-            "-target", target_url, 
-            "-tags", tags, 
-            "-severity", "low,medium,high,critical",
-            "-jsonl", 
-            "-silent"
-        ]
-        
-        findings = []
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            if result.stdout:
-                for line in result.stdout.splitlines():
-                    if line.strip():
-                        findings.append(json.loads(line.strip()))
-        except subprocess.TimeoutExpired:
-            logging.error(f"[GoWrapper] nuclei timed out scanning {target_url}")
-        except Exception as e:
-            logging.error(f"[GoWrapper] nuclei error: {str(e)}")
+    def run_nuclei(self, target_url: str) -> List[Dict]:
+        if not shutil.which("nuclei"):
+            logging.error("[-] nuclei binary missing from system PATH.")
+            return []
             
-        return findings
+        # OPTIMIZED: Bound the templates to critical/high to prevent rate-limiting hangs during triage
+        cmd = ["nuclei", "-u", target_url, "-silent", "-jsonl", "-severity", "critical,high"]
+        cmd.extend(self.cmd_headers)
+        cmd.extend(self.rate_limit_args)
+        
+        try:
+            logging.info("[Supervisor] Launching optimized signature scanning matrix...")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            
+            if result.returncode != 0 and not result.stdout:
+                logging.error(f"[!] Nuclei execution dropped error: {result.stderr}")
+                return []
+                
+            vulns = []
+            for line in result.stdout.strip().split('\n'):
+                if not line: continue
+                try:
+                    data = json.loads(line)
+                    vulns.append({
+                        "template_id": data.get("template-id"),
+                        "severity": data.get("info", {}).get("severity"),
+                        "name": data.get("info", {}).get("name"),
+                        "matched": data.get("matched-at")
+                    })
+                except json.JSONDecodeError:
+                    continue
+            return vulns
+        except Exception as e:
+            logging.error(f"[-] nuclei execution failed: {e}")
+            return []
