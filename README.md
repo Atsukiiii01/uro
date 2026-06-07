@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ URO
+#  URO
 
 ### Asymmetric Attack Surface Management Framework
 
