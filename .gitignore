@@ -9,3 +9,18 @@ __pycache__/
 
 # OS junk
 .DS_Store
+cat <<EOF > .gitignore
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# Rust
+src-rust/target/
+src-rust/Cargo.lock
+
+# Database & IDE
+data/
+.vscode/
+.DS_Store
+EOF
