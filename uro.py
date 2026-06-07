@@ -125,6 +125,51 @@ def cmd_triage(args):
     print("============================================================")
     print(report)
 
+def cmd_hunt(args):
+    """Batch processes the attack surface, feeding high-value targets to the Triage Agent."""
+    initialize_profile(args.profile)
+    cfg = ConfigManager()
+    
+    scope_rules = ""
+    if cfg.scope_file:
+        try:
+            with open(cfg.scope_file, "r", encoding="utf-8") as f:
+                scope_rules = f.read()
+        except Exception:
+            pass
+
+    db = DeltaDB()
+    with db._get_connection() as conn:
+        cursor = conn.cursor()
+        # Filter 1: Only triage assets that are alive (200, 401, 403) and have actual data mapped to them
+        cursor.execute('''
+            SELECT DISTINCT w.id, w.url 
+            FROM web_services w
+            LEFT JOIN endpoints e ON w.id = e.web_service_id
+            LEFT JOIN leaked_secrets s ON w.id = s.web_service_id
+            WHERE w.status_code IN (200, 401, 403) 
+            AND (e.id IS NOT NULL OR s.id IS NOT NULL)
+        ''')
+        viable_targets = cursor.fetchall()
+
+    if not viable_targets:
+        logging.info("[*] No high-value targets with extracted intel found in the database. Scan more assets.")
+        return
+
+    logging.info(f"[*] Batch Orchestrator engaged. Queuing {len(viable_targets)} high-value targets for AI Triage.")
+    agent = SupervisorFabric()
+
+    for ws_id, exact_url in viable_targets:
+        print(f"\n============================================================")
+        print(f" TARGET: {exact_url}")
+        print(f"============================================================")
+        try:
+            report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
+            print(report)
+        except Exception as e:
+            logging.error(f"[-] Triage Agent crashed on {exact_url}: {e}")
+            continue    
+
 def main():
     parser = argparse.ArgumentParser(description="Autonomous Offensive Security OS")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -138,6 +183,11 @@ def main():
     triage_parser.add_argument("target", help="Target URL or fuzzy string to triage")
     triage_parser.add_argument("--profile", "-p", help="Path to YAML operational profile", required=True)
     triage_parser.set_defaults(func=cmd_triage)
+
+    # Hunt Command Configuration
+    hunt_parser = subparsers.add_parser("hunt", help="Batch triage all viable, data-rich targets in the database")
+    hunt_parser.add_argument("--profile", "-p", help="Path to YAML operational profile", required=True)
+    hunt_parser.set_defaults(func=cmd_hunt)
 
     args = parser.parse_args()
     args.func(args)
