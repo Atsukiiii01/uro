@@ -3,17 +3,30 @@ import logging
 import os
 from datetime import datetime
 from typing import List, Tuple
+from contextlib import contextmanager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class DeltaDB:
     def __init__(self, db_path: str = "data/uro.db"):
         self.db_path = db_path
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        db_dir = os.path.dirname(self.db_path)
+        # Only attempt to create directories if the path isn't an in-memory database
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         self._init_db()
 
+    @contextmanager
     def _get_connection(self):
-        return sqlite3.connect(self.db_path)
+        """Yields a connection that auto-commits and auto-closes."""
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        try:
+            # The inner 'with' block manages the transaction (commits on success, rolls back on error)
+            with conn:
+                yield conn
+        finally:
+            # The finally block guarantees the file descriptor is released, stopping the memory leak
+            conn.close()
 
     def _init_db(self):
         """Creates the minimalist tables required for Delta tracking."""
