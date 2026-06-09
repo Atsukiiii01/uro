@@ -10,6 +10,14 @@ from modules.recon import ReconEngine
 from modules.prober import LiveProber
 from modules.js_analyzer import JSAnalyzer
 
+# Phase C: Rust Integration Stub
+try:
+    import uro_rust_core
+    RUST_CORE_ACTIVE = True
+except ImportError:
+    RUST_CORE_ACTIVE = False
+    logging.warning("[!] uro_rust_core not loaded. Engine will run with degraded performance.")
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def initialize_profile(profile_path: str):
@@ -28,26 +36,44 @@ def cmd_scan(args):
 
     engine = ReconEngine(target_domain)
     discovered_assets = engine.run_all()
-    
-    # Explicitly append the direct target to make sure standalone hosts scan
     discovered_assets.add(target_domain)
 
+    print("\n[*] Phase 2: Evaluating Deltas (Bulk Processing)...")
     new_assets_to_probe = {}
 
-    print("\n[*] Phase 2: Evaluating Deltas...")
     with db._get_connection() as conn:
         cursor = conn.cursor()
-        for sub in discovered_assets:
-            cursor.execute('SELECT id FROM subdomains WHERE subdomain = ?', (sub,))
-            result = cursor.fetchone()
+        
+        # 1. Bulk fetch all existing subdomains for this domain
+        cursor.execute('SELECT id, subdomain FROM subdomains WHERE domain_id = ?', (domain_id,))
+        existing_assets = {row[1]: row[0] for row in cursor.fetchall()}
+        
+        # 2. Use set math to find strictly new subdomains
+        new_subs = discovered_assets - existing_assets.keys()
+        subs_to_update = discovered_assets.intersection(existing_assets.keys())
+
+        # 3. Bulk insert new subdomains
+        if new_subs:
+            # executemany is infinitely faster than looping single inserts
+            cursor.executemany(
+                'INSERT INTO subdomains (domain_id, subdomain) VALUES (?, ?)', 
+                [(domain_id, sub) for sub in new_subs]
+            )
             
-            if not result:
-                cursor.execute('INSERT INTO subdomains (domain_id, subdomain) VALUES (?, ?)', (domain_id, sub))
-                new_id = cursor.lastrowid
-                new_assets_to_probe[new_id] = sub
+            # Fetch the newly assigned IDs
+            cursor.execute('SELECT id, subdomain FROM subdomains WHERE domain_id = ?', (domain_id,))
+            updated_assets = {row[1]: row[0] for row in cursor.fetchall()}
+            
+            for sub in new_subs:
+                new_assets_to_probe[updated_assets[sub]] = sub
                 print(f"[+] NEW DELTA: {sub}")
-            else:
-                cursor.execute('UPDATE subdomains SET last_seen = CURRENT_TIMESTAMP WHERE id = ?', (result[0],))
+
+        # 4. Bulk update last_seen timestamps
+        if subs_to_update:
+            cursor.executemany(
+                'UPDATE subdomains SET last_seen = CURRENT_TIMESTAMP WHERE id = ?', 
+                [(existing_assets[sub],) for sub in subs_to_update]
+            )
 
     print(f"\n[+] Found {len(new_assets_to_probe)} assets targeting execution queue.")
 
@@ -78,6 +104,8 @@ def cmd_scan(args):
             service_id = row[0]
 
             print(f"    └── Parsing scripts on {service['url']}...")
+            
+            # TODO: This is where uro_rust_core needs to replace Python logic
             analyzer = JSAnalyzer(service["url"])
             intel = analyzer.analyze()
 
@@ -199,14 +227,12 @@ def main():
 
     args = parser.parse_args()
 
-    # A-7: Enforce domain validation before allowing the scan to execute
     if args.command == "scan":
         domain_re = re.compile(r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$')
         if not domain_re.match(args.target):
             logging.error(f"[-] Invalid domain format: {args.target}")
             sys.exit(1)
 
-    # A-6: Global SIGINT handler
     try:
         args.func(args)
     except KeyboardInterrupt:
