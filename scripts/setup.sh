@@ -1,3 +1,21 @@
+#!/usr/bin/env bash
+set -e
+
+echo "[*] Initiating URO core environment setup..."
+
+# 1. Python Virtual Environment & Dependencies
+if [ ! -d "venv" ]; then
+    echo "[*] Creating Python virtual environment..."
+    python3 -m venv venv
+fi
+
+echo "[*] Activating virtual environment and installing dependencies..."
+source venv/bin/activate
+pip install --upgrade pip
+if [ -f "requirements.txt" ]; then
+    pip install -r requirements.txt
+fi
+
 # 2. Rust Native Compilation
 echo "[*] Checking for Rust toolchain..."
 if ! command -v cargo &> /dev/null; then
@@ -20,3 +38,12 @@ fi
 
 cargo build --release
 cd ..
+
+# Auto-copy the compiled binary for macOS or Linux
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    cp src-rust/target/release/liburo_rust_core.dylib uro_rust_core.so
+else
+    cp src-rust/target/release/liburo_rust_core.so uro_rust_core.so
+fi
+
+echo "[+] Setup complete. To activate the environment, run: source venv/bin/activate"
