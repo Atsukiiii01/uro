@@ -1,26 +1,19 @@
-# Virtual Environment
+# Python Environments
 venv/
-.env
-
-# Databases & Cache
-data/*.db
 __pycache__/
 *.pyc
 
-# OS junk
-.DS_Store
-cat <<EOF > .gitignore
-# Python
-__pycache__/
-*.py[cod]
-venv/
-
-# Rust
+# Rust Compilation Artifacts
 src-rust/target/
-src-rust/Cargo.lock
+Cargo.lock
 
-# Database & IDE
+# Compiled Native Libraries
+*.so
+*.dylib
+
+# Target Intelligence Database
 data/
-.vscode/
-.DS_Store
-EOF
+*.db
+
+# Environment Variables
+.env
