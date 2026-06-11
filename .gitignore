@@ -1,19 +1,16 @@
-# Python Environments
-venv/
-__pycache__/
-*.pyc
+cat <<EOT >> .gitignore
 
-# Rust Compilation Artifacts
-src-rust/target/
-Cargo.lock
-
-# Compiled Native Libraries
-*.so
-*.dylib
-
-# Target Intelligence Database
+# Environment and Data
+.env
 data/
 *.db
 
-# Environment Variables
-.env
+# Python and Rust Build Artifacts
+venv/
+__pycache__/
+*.pyc
+*.so
+*.dylib
+src-rust/target/
+EOT.coverage
+profile.yaml
