@@ -25,9 +25,10 @@ def initialize_profile(profile_path: str):
 
 def cmd_scan(args):
     initialize_profile(args.profile)
+    cfg = ConfigManager()
     target_domain = args.target
     
-    db = DeltaDB()
+    db = DeltaDB(cfg.db_path)
     domain_id = db.add_domain(target_domain)
     
     print(f"\n[*] Target: {target_domain} (ID: {domain_id})")
@@ -70,7 +71,7 @@ def cmd_scan(args):
 
     if new_assets_to_probe:
         print("\n[*] Phase 3: Launching Live Prober on Targets...")
-        prober = LiveProber(threads=10)
+        prober = LiveProber(threads=cfg.prober_threads)
         live_services = prober.run(new_assets_to_probe)
 
         print("\n[*] Phase 4: Committing verified web services & extracting JS Intel...")
@@ -103,14 +104,14 @@ def cmd_scan(args):
                     db.add_secret(web_service_id=service_id, secret_type=secret["type"], value=secret["value"], location=secret["location"])
 
             db.mark_scanned(service["subdomain_id"])
-        print(f"\n[+] Processing complete. Attack surface data fully structured inside data/uro.db")
+        print(f"\n[+] Processing complete. Attack surface data fully structured inside {cfg.db_path}")
     else:
         print("\n[*] No new assets require probing or static code analysis.")
 
 def cmd_triage(args):
     initialize_profile(args.profile)
-    target = args.target
     cfg = ConfigManager()
+    target = args.target
     scope_rules = ""
     if cfg.scope_file:
         try:
@@ -119,7 +120,7 @@ def cmd_triage(args):
         except Exception:
             pass
 
-    db = DeltaDB()
+    db = DeltaDB(cfg.db_path)
     with db._get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT id, url FROM web_services WHERE url LIKE ?', (f"%{target}%",))
@@ -129,9 +130,11 @@ def cmd_triage(args):
             return
 
     ws_id, exact_url = result[0], result[1]
+    
+    print(f"\n[*] Initiating AI Triage for target: {exact_url}...")
     agent = TriageAgent()
     report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
-    print(f"\nTarget: {exact_url}\n{report}")
+    print(f"\n{report}")
 
 def cmd_hunt(args):
     initialize_profile(args.profile)
@@ -144,7 +147,7 @@ def cmd_hunt(args):
         except Exception:
             pass
 
-    db = DeltaDB()
+    db = DeltaDB(cfg.db_path)
     with db._get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -158,14 +161,19 @@ def cmd_hunt(args):
         viable_targets = cursor.fetchall()
 
     if not viable_targets:
+        print("[-] No viable targets with extracted intelligence found for hunting.")
         return
 
+    print(f"\n[*] Hunt Execution Started. {len(viable_targets)} viable targets in AI queue.")
     agent = TriageAgent()
-    for ws_id, exact_url in viable_targets:
+    
+    for index, (ws_id, exact_url) in enumerate(viable_targets, 1):
+        print(f"\n[{index}/{len(viable_targets)}] Processing {exact_url} through LangGraph pipeline...")
         try:
             report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
-            print(f"\nTarget: {exact_url}\n{report}")
-        except Exception:
+            print(f"{report}")
+        except Exception as e:
+            print(f"    └── [!] Triage failed on {exact_url}: {e}")
             continue
 
 def main():
@@ -190,6 +198,7 @@ def main():
     try:
         args.func(args)
     except KeyboardInterrupt:
+        print("\n[!] Execution interrupted by user. Exiting cleanly.")
         sys.exit(0)
 
 if __name__ == "__main__":
