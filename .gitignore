@@ -14,3 +14,7 @@ __pycache__/
 src-rust/target/
 EOT.coverage
 profile.yaml
+
+# OS and IDE files
+.DS_Store
+.vscode/
