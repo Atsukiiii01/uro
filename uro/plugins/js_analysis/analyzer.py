@@ -1,51 +1,55 @@
 import logging
-import re
 import requests
-import urllib3
-from typing import Dict, Any
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import re
+from typing import Dict, List, Any
 
 try:
     from uro import uro_rust_core # type: ignore
     RUST_CORE_ACTIVE = True
 except ImportError:
     RUST_CORE_ACTIVE = False
+    logging.warning("[!] uro_rust_core missing. Falling back to slow Python regex.")
 
 class JSAnalyzer:
     def __init__(self, url: str):
         self.url = url
+        self.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         self.timeout = 10
-        self.path_pattern = re.compile(r'["\'](/[a-zA-Z0-9_/?&\-=.]+)["\']')
-        self.secret_pattern = re.compile(r'(?i)(?:api_key|apikey|secret|token|bearer|password)[\s:=]+["\']([a-zA-Z0-9_\-\.]{16,})["\']')
 
     def analyze(self) -> Dict[str, Any]:
-        intel: Dict[str, Any] = {"paths": [], "secrets": []}
+        intel = {"paths": [], "secrets": []}
         try:
-            response = requests.get(
-                self.url, 
-                timeout=self.timeout, 
-                verify=False,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            )
+            response = requests.get(self.url, headers=self.headers, verify=False, timeout=self.timeout)
             if response.status_code != 200:
                 return intel
+            
             content = response.text
 
             if RUST_CORE_ACTIVE:
                 try:
-                    rust_result = uro_rust_core.analyze_content(content, self.url)
-                    if isinstance(rust_result, dict):
-                        intel["paths"].extend(rust_result.get("paths", []))
-                        intel["secrets"].extend(rust_result.get("secrets", []))
+                    # Fix: Correct FFI method name and unpack the tuple (Vec<String>, Vec<(str, str)>)
+                    rust_paths, rust_secrets = uro_rust_core.extract_security_intel(content)
+                    intel["paths"] = rust_paths
+                    
+                    # Map the Rust tuple format into the expected dictionary format
+                    intel["secrets"] = [{"type": s[0], "value": s[1], "location": self.url} for s in rust_secrets]
                     return intel
                 except Exception as e:
-                    logging.error(f"[-] Rust engine failure on {self.url}: {e}")
+                    logging.error(f"[-] Rust core analysis crashed on {self.url}: {e}. Falling back to Python.")
 
-            intel["paths"] = list(set(self.path_pattern.findall(content)))
-            for secret in set(self.secret_pattern.findall(content)):
-                if len(secret) > 15:
-                    intel["secrets"].append({"type": "Generic_Secret", "value": secret, "location": self.url})
-            return intel
-        except requests.RequestException:
-            return intel
+            # Python Fallback
+            path_pattern = re.compile(r'(?:"|\')(((?:[a-zA-Z]{1,10}://|/)[^"\'\s]+|([a-zA-Z0-9_\-]+/)+[a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9]+)?))(?:"|\')')
+            secret_pattern = re.compile(r'(?i)(?:api_key|access_token|secret)[\s:=]+["\']([a-zA-Z0-9_\-]{16,})["\']')
+
+            paths = path_pattern.findall(content)
+            intel["paths"] = list(set([p[0] for p in paths]))
+
+            secrets = secret_pattern.findall(content)
+            intel["secrets"] = [{"type": "HEURISTIC_SECRET", "value": s, "location": self.url} for s in set(secrets)]
+
+        except requests.exceptions.RequestException:
+            pass
+        except Exception as e:
+            logging.error(f"[-] JS Analysis failed on {self.url}: {e}")
+
+        return intel
