@@ -107,27 +107,53 @@ class TriageAgent:
             return {"filtered_endpoints": endpoints[:10]}
 
     def node_generate_plan(self, state: TriageState) -> TriageState:
+        """Evaluates target intelligence. Bypasses LLM compute if no deep attack surface exists."""
+        from urllib.parse import urlparse # Fix: Localized import to resolve NameError
+        import json
+        import logging
+        from langchain_core.prompts import ChatPromptTemplate
+
         filtered = state.get("filtered_endpoints", [])
         secrets = state.get("secrets", [])
-        
-        if not filtered and not secrets:
-            return {"report": "No actionable intelligence or high-value routes found. Target deprioritized."}
+        url = state["url"]
 
+        # Clean and isolate the routes to find actual deep paths or parameters
+        meaningful_routes = [
+            r for r in filtered 
+            if r.strip() and r.strip("/") != url.strip("/") and len(urlparse(r).path) > 1
+        ]
+
+        # Substance Check: If there are no deep paths, no query parameters, and no secrets, exit immediately
+        if not meaningful_routes and not secrets:
+            report = (
+                f"=== AI Triage Report: {url} ===\n"
+                f"[!] Status: Deprioritized\n"
+                f"[-] Reason: No deep endpoints, parameters, or credentials detected by the extraction engine.\n"
+                f"[+] Action: Maintain passive monitoring. No actionable web attack surface.\n"
+            )
+            return {"report": report}
+
+        # If we pass the filter, we have real data to analyze. Invoke the model.
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an offensive security AI operating under strict rules of engagement.
-Scope constraints:
+            ("system", """You are a deterministic offensive security triage engine. Your job is to analyze real technical indicators and output a structured attack plan.
+
+[RULES]
+1. Base your hypothesis ONLY on the provided Routes and Secrets.
+2. If the data shows a specific technology or path, target that technology.
+3. DO NOT invent parameters, paths, or vulnerabilities that are not supported by the input data.
+4. Absolute ban on repeating generic examples.
+
+[PROGRAM POLICY]
 {scope}
 
-Analyze the target: {url}
-
-High-Value Routes:
+[LIVE ASSET UNDER ANALYSIS]
+Target URL: {url}
+Discovered Routes:
 {routes}
 
-Leaked Secrets:
-{secrets}
-
-Generate a concise, actionable attack plan focusing ONLY on high-impact vulnerabilities (Account Takeover, Auth Bypass, Data Exposure). You must verify that your plan complies with the Scope constraints."""),
-            ("human", "Generate the attack plan now.")
+Extracted Secrets:
+{secrets}"""),
+            ("human", "Analyze the indicators for {url} and generate the structured attack plan schema.")
         ])
 
         structured_llm = self.llm.with_structured_output(AttackPlan)
@@ -135,14 +161,14 @@ Generate a concise, actionable attack plan focusing ONLY on high-impact vulnerab
 
         try:
             result = chain.invoke({
-                "scope": state.get("scope_rules") or "No specific scope provided. Assume standard bug bounty rules.",
-                "url": state["url"],
-                "routes": "\n".join(filtered) if filtered else "None",
+                "scope": state.get("scope_rules") or "Adhere to standard, responsible bug bounty constraints.",
+                "url": url,
+                "routes": "\n".join(meaningful_routes),
                 "secrets": json.dumps(secrets) if secrets else "None"
             })
             
             report = (
-                f"=== AI Triage Report: {state['url']} ===\n"
+                f"=== AI Triage Report: {url} ===\n"
                 f"[!] Hypothesis: {result.vulnerability_hypothesis}\n\n"
                 f"[*] Validation Steps:\n"
             )
