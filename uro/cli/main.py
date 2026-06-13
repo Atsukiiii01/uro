@@ -9,6 +9,7 @@ from uro.ai.pipeline import TriageAgent
 from uro.plugins.subdomain.recon import ReconEngine
 from uro.probing.client import LiveProber
 from uro.plugins.js_analysis.analyzer import JSAnalyzer
+from uro.core.reporting import ReportManager
 
 try:
     from uro import uro_rust_core # type: ignore
@@ -27,7 +28,13 @@ def cmd_scan(args):
     initialize_profile(args.profile)
     cfg = ConfigManager()
     target_domain = args.target
-    
+
+    # Safely wipe the database if --force is passed
+    if args.force:
+        logging.info(f"[*] --force flag detected. Wiping operational database at {cfg.db_path}...")
+        if os.path.exists(cfg.db_path):
+            os.remove(cfg.db_path)
+            
     db = DeltaDB(cfg.db_path)
     domain_id = db.add_domain(target_domain)
     
@@ -71,7 +78,7 @@ def cmd_scan(args):
 
     if new_assets_to_probe:
         print("\n[*] Phase 3: Launching Live Prober on Targets...")
-        prober = LiveProber(threads=cfg.prober_threads)
+        prober = LiveProber(threads=cfg.prober_threads, rps=cfg.rate_limit_rps, custom_headers=cfg.custom_headers)
         live_services = prober.run(new_assets_to_probe)
 
         print("\n[*] Phase 4: Committing verified web services & extracting JS Intel...")
@@ -91,7 +98,7 @@ def cmd_scan(args):
                 
             print(f"    └── Parsing scripts on {service['url']}...")
             
-            analyzer = JSAnalyzer(service["url"])
+            analyzer = JSAnalyzer(service["url"], custom_headers=cfg.custom_headers)
             intel = analyzer.analyze()
 
             if intel["paths"]:
@@ -133,8 +140,11 @@ def cmd_triage(args):
     
     print(f"\n[*] Initiating AI Triage for target: {exact_url}...")
     agent = TriageAgent()
+    reporter = ReportManager()
+    
     report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
     print(f"\n{report}")
+    reporter.save_triage_report(exact_url, report)
 
 def cmd_hunt(args):
     initialize_profile(args.profile)
@@ -148,6 +158,8 @@ def cmd_hunt(args):
             pass
 
     db = DeltaDB(cfg.db_path)
+    reporter = ReportManager()
+    
     with db._get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -172,6 +184,7 @@ def cmd_hunt(args):
         try:
             report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
             print(f"{report}")
+            reporter.save_triage_report(exact_url, report)
         except Exception as e:
             print(f"    └── [!] Triage failed on {exact_url}: {e}")
             continue
@@ -183,6 +196,7 @@ def main():
     scan_parser = subparsers.add_parser("scan")
     scan_parser.add_argument("target")
     scan_parser.add_argument("--profile", "-p", required=True)
+    scan_parser.add_argument("--force", action="store_true", help="Wipe database and force a fresh scan")
     scan_parser.set_defaults(func=cmd_scan)
 
     triage_parser = subparsers.add_parser("triage")
