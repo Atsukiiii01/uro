@@ -19,3 +19,10 @@ profile.yaml
 .DS_Store
 .vscode/
 profiles/
+# Runtime and Intel Artifacts
+workspace/
+data/
+*.db
+.coverage
+underground.txt
+__pycache__/
