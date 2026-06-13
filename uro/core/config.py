@@ -1,7 +1,7 @@
 import os
 import logging
 import yaml
-from typing import Optional
+from typing import Optional, Dict
 
 class ConfigManager:
     _instance = None
@@ -21,6 +21,9 @@ class ConfigManager:
         self.rate_limit_rps: int = 10
         self.scope_file: Optional[str] = None
         self.profile_name: str = "Default Profile"
+        self.custom_headers: Dict[str, str] = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
 
     def _load_env_file(self):
         if os.path.exists(".env"):
@@ -43,14 +46,23 @@ class ConfigManager:
                 self.profile_name = config_data.get("name", "Unknown Target")
                 
                 # Sandbox the scope_file to prevent path traversal
+                # Sandbox the scope_file to prevent path traversal
                 raw_scope = config_data.get("scope_file")
                 if raw_scope:
-                    base_dir = os.path.dirname(os.path.abspath(profile_path))
-                    resolved = os.path.realpath(os.path.join(base_dir, raw_scope))
-                    if resolved.startswith(base_dir):
-                        self.scope_file = resolved
+                    # Expand the ~ if it exists
+                    raw_scope = os.path.expanduser(raw_scope)
+                    
+                    if os.path.isabs(raw_scope):
+                        # If it's an absolute path (like /Users/aitoo/...), use it directly
+                        self.scope_file = raw_scope
                     else:
-                        logging.error("[-] SECURITY: scope_file path traversal attempt blocked.")
+                        # If it's relative, resolve it against the profile directory
+                        base_dir = os.path.dirname(os.path.abspath(profile_path))
+                        resolved = os.path.realpath(os.path.join(base_dir, raw_scope))
+                        if resolved.startswith(base_dir):
+                            self.scope_file = resolved
+                        else:
+                            logging.error("[-] SECURITY: scope_file path traversal attempt blocked.")
                 
                 if "threads" in config_data:
                     self.prober_threads = int(config_data["threads"])
@@ -61,6 +73,10 @@ class ConfigManager:
                 network_rules = config_data.get("network_rules", {})
                 if "rate_limit_rps" in network_rules:
                     self.rate_limit_rps = int(network_rules["rate_limit_rps"])
+                
+                # Extract arbitrary compliance headers dynamically
+                if "custom_headers" in config_data and isinstance(config_data["custom_headers"], dict):
+                    self.custom_headers.update(config_data["custom_headers"])
                     
                 logging.info(f"[*] Activated operational profile: {self.profile_name}")
         except Exception as e:
