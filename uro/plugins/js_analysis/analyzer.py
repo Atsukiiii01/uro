@@ -11,9 +11,11 @@ except ImportError:
     logging.warning("[!] uro_rust_core missing. Falling back to slow Python regex.")
 
 class JSAnalyzer:
-    def __init__(self, url: str):
+    def __init__(self, url: str, custom_headers: Dict[str, str] = None):
         self.url = url
-        self.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        self.headers = custom_headers or {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
         self.timeout = 10
 
     def analyze(self) -> Dict[str, Any]:
@@ -27,17 +29,13 @@ class JSAnalyzer:
 
             if RUST_CORE_ACTIVE:
                 try:
-                    # Fix: Correct FFI method name and unpack the tuple (Vec<String>, Vec<(str, str)>)
                     rust_paths, rust_secrets = uro_rust_core.extract_security_intel(content)
                     intel["paths"] = rust_paths
-                    
-                    # Map the Rust tuple format into the expected dictionary format
                     intel["secrets"] = [{"type": s[0], "value": s[1], "location": self.url} for s in rust_secrets]
                     return intel
                 except Exception as e:
                     logging.error(f"[-] Rust core analysis crashed on {self.url}: {e}. Falling back to Python.")
 
-            # Python Fallback
             path_pattern = re.compile(r'(?:"|\')(((?:[a-zA-Z]{1,10}://|/)[^"\'\s]+|([a-zA-Z0-9_\-]+/)+[a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9]+)?))(?:"|\')')
             secret_pattern = re.compile(r'(?i)(?:api_key|access_token|secret)[\s:=]+["\']([a-zA-Z0-9_\-]{16,})["\']')
 
