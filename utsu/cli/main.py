@@ -85,7 +85,9 @@ def cmd_scan(args):
         live_services = prober.run(new_assets_to_probe)
 
         print("\n[*] Phase 4: Committing verified web services & extracting JS Intel...")
+        live_urls = []
         for service in live_services:
+            live_urls.append(service["url"])
             db.add_web_service(
                 subdomain_id=service["subdomain_id"],
                 url=service["url"],
@@ -114,7 +116,12 @@ def cmd_scan(args):
                     db.add_secret(web_service_id=service_id, secret_type=secret["type"], value=secret["value"], location=secret["location"])
 
             db.mark_scanned(service["subdomain_id"])
+            
+        reporter = ReportManager()
+        target_file = reporter.save_scan_targets(target_domain, live_urls)
+        
         print(f"\n[+] Processing complete. Attack surface data fully structured inside {cfg.db_path}")
+        print(f"[+] Flat target list exported to: {target_file}")
     else:
         print("\n[*] No new assets require probing or static code analysis.")
 
@@ -149,6 +156,7 @@ def cmd_triage(args):
     if report:
         print(f"\n{report}")
         reporter.save_triage_report(exact_url, report)
+        print(f"[+] Output appended to {reporter.master_hunt_log}")
 
 def cmd_hunt(args):
     initialize_profile(args.profile)
@@ -196,11 +204,14 @@ def cmd_hunt(args):
         except RuntimeError as e:
             if "GROQ_RATE_LIMIT" in str(e):
                 print(f"\n[!] CRITICAL: API Rate Limit exhausted. Halting execution to preserve target queue.")
+                print(f"[+] All completed reports saved securely in {reporter.master_hunt_log}")
                 break
             print(f"    └── [!] Triage failed on {exact_url}: {e}")
         except Exception as e:
             print(f"    └── [!] Triage failed on {exact_url}: {e}")
             continue
+            
+    print(f"\n[+] Hunt phase complete. Review your findings in {reporter.master_hunt_log}")
 
 def main():
     parser = argparse.ArgumentParser(description="Asymmetric Attack Surface Management Framework")
@@ -225,14 +236,12 @@ def main():
     try:
         args.func(args)
     except ValueError as e:
-        # Catch configuration errors (like missing API keys) and print cleanly
         print(f"\n[-] CONFIGURATION ERROR: {e}")
         sys.exit(1)
     except KeyboardInterrupt:
         print("\n[!] Execution interrupted by user. Exiting cleanly.")
         sys.exit(0)
     except Exception as e:
-        # Catch unexpected fatal errors without dumping raw python tracebacks
         print(f"\n[-] UNEXPECTED FATAL ERROR: {e}")
         print("    Please ensure your environment is configured correctly.")
         sys.exit(1)
