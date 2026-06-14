@@ -1,45 +1,31 @@
 [build-system]
-requires = ["maturin>=1.5,<2.0"]
+requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "uro"
+name = "utsu"
 version = "0.1.0"
-description = "Autonomous Delta-Aware Offensive Security Intelligence Engine"
+description = "Asymmetric attack surface management framework"
 readme = "README.md"
-requires-python = ">=3.11"
-authors = [
-    { name = "Atsukiiii01" }
-]
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Rust",
-    "Topic :: Security",
-    "Environment :: Console"
+    "Operating System :: OS Independent",
 ]
 dependencies = [
-    "requests>=2.31.0",
-    "urllib3>=2.2.0",
-    "pyyaml>=6.0.1",
-]
-
-[project.optional-dependencies]
-ai = [
-    "langchain-ollama>=0.1.0",
-    "langgraph>=0.1.0",
-    "pydantic>=2.6.0",
-]
-dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
-    "ruff>=0.3.0",
-    "mypy>=1.9.0",
+    "pydantic>=2.0",
+    "langchain-groq",
+    "langchain-core",
+    "requests",
+    "pyyaml"
 ]
 
 [project.scripts]
-uro = "uro.cli.main:main"
+# This exposes the 'utsu' command globally and points it to your CLI entrypoint
+utsu = "utsu.cli.main:main"
 
 [tool.maturin]
+manifest-path = "src-rust/Cargo.toml"   # <-- ADD THIS LINE
+module-name = "utsu.utsu_rust_core"
 features = ["pyo3/extension-module"]
-manifest-path = "src-rust/Cargo.toml"
-module-name = "uro.uro_rust_core"

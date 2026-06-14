@@ -1,16 +1,32 @@
 import sqlite3
 import logging
 import os
+import stat
 from typing import List, Tuple, Optional
 from contextlib import contextmanager
 
 class DeltaDB:
-    def __init__(self, db_path: str = "data/uro.db"):
+    def __init__(self, db_path: str = "data/utsu.db"):
         self.db_path = db_path
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+        self._ensure_secure_db()
         self._init_db()
+
+    def _ensure_secure_db(self):
+        """Forces strict 0600 OS-level permissions on the SQLite database."""
+        db_dir = os.path.dirname(self.db_path)
+        
+        # Ensure the directory exists and restrict access to owner only (0700)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+            os.chmod(db_dir, stat.S_IRWXU)
+            
+        # Create file if it doesn't exist to apply permissions before writing data
+        if not os.path.exists(self.db_path):
+            with open(self.db_path, 'a'): pass
+            
+        # Explicitly restrict database file to owner read/write (0600)
+        os.chmod(self.db_path, stat.S_IRUSR | stat.S_IWUSR)
+        logging.debug(f"[*] Enforced strict 0600 permissions on database: {self.db_path}")
 
     @contextmanager
     def _get_connection(self):

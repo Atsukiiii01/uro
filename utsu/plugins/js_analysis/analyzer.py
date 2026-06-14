@@ -4,7 +4,7 @@ import re
 from typing import Dict, List, Any
 
 try:
-    from uro import uro_rust_core # type: ignore
+    from utsu import utsu_rust_core # type: ignore
     RUST_CORE_ACTIVE = True
 except ImportError:
     RUST_CORE_ACTIVE = False

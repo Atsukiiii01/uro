@@ -2,17 +2,17 @@ import argparse
 import logging
 import sys
 import os
-import re
-from uro.storage.repository import DeltaDB
-from uro.core.config import ConfigManager
-from uro.ai.pipeline import TriageAgent
-from uro.plugins.subdomain.recon import ReconEngine
-from uro.probing.client import LiveProber
-from uro.plugins.js_analysis.analyzer import JSAnalyzer
-from uro.core.reporting import ReportManager
+import time
+from utsu.storage.repository import DeltaDB
+from utsu.core.config import ConfigManager
+from utsu.ai.pipeline import TriageAgent
+from utsu.plugins.subdomain.recon import ReconEngine
+from utsu.probing.client import LiveProber
+from utsu.plugins.js_analysis.analyzer import JSAnalyzer
+from utsu.core.reporting import ReportManager
 
 try:
-    from uro import uro_rust_core # type: ignore
+    from utsu import utsu_rust_core # type: ignore
     RUST_CORE_ACTIVE = True
 except ImportError:
     RUST_CORE_ACTIVE = False
@@ -29,7 +29,6 @@ def cmd_scan(args):
     cfg = ConfigManager()
     target_domain = args.target
 
-    # Safely wipe the database if --force is passed
     if args.force:
         logging.info(f"[*] --force flag detected. Wiping operational database at {cfg.db_path}...")
         if os.path.exists(cfg.db_path):
@@ -142,9 +141,13 @@ def cmd_triage(args):
     agent = TriageAgent()
     reporter = ReportManager()
     
-    report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
-    print(f"\n{report}")
-    reporter.save_triage_report(exact_url, report)
+    try:
+        report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
+        if report:
+            print(f"\n{report}")
+            reporter.save_triage_report(exact_url, report)
+    except Exception as e:
+        print(f"[-] Triage execution failed: {e}")
 
 def cmd_hunt(args):
     initialize_profile(args.profile)
@@ -183,8 +186,18 @@ def cmd_hunt(args):
         print(f"\n[{index}/{len(viable_targets)}] Processing {exact_url} through LangGraph pipeline...")
         try:
             report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
-            print(f"{report}")
-            reporter.save_triage_report(exact_url, report)
+            if report:
+                print(f"{report}")
+                reporter.save_triage_report(exact_url, report)
+            
+            # API Pacing to respect cloud infrastructure limits
+            time.sleep(2.5)
+            
+        except RuntimeError as e:
+            if "GROQ_RATE_LIMIT" in str(e):
+                print(f"\n[!] CRITICAL: API Rate Limit exhausted. Halting execution to preserve target queue.")
+                break
+            print(f"    └── [!] Triage failed on {exact_url}: {e}")
         except Exception as e:
             print(f"    └── [!] Triage failed on {exact_url}: {e}")
             continue
