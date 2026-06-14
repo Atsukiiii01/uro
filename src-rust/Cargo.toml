@@ -1,12 +1,12 @@
 [package]
-name = "uro_rust_core"
+name = "utsu_rust_core"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "uro_rust_core"
+name = "utsu_rust_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-regex = "1.10"
-pyo3 = { version = "0.21", features = ["extension-module"] }
+pyo3 = { version = "0.21.2", features = ["extension-module", "abi3-py39"] }
+regex = "1.10.4"
