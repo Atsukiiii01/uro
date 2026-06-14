@@ -1,6 +1,6 @@
 <div align="center">
 
-# URO
+# UTSU
 
 ### Attack Surface Intelligence Platform
 
