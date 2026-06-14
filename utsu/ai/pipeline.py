@@ -15,7 +15,8 @@ class TriageAgent:
     def __init__(self, model_name: str = "llama-3.3-70b-versatile"):
         api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
-            logging.error("[-] GROQ_API_KEY environment variable is missing. Export it before running.")
+            # Trap the error immediately instead of letting LangChain throw a cryptic pydantic validation error
+            raise ValueError("GROQ_API_KEY environment variable is missing. Export it before running: export GROQ_API_KEY='your-key-here'")
             
         self.llm = ChatGroq(
             model_name=model_name,
@@ -60,7 +61,6 @@ class TriageAgent:
                 f"[+] Action: Maintain passive monitoring. No actionable web attack surface.\n"
             )
 
-        # XML boundaries added to the prompt template to sandbox malicious target JS strings
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a deterministic, elite offensive security triage engine. Your job is to analyze real technical indicators and output a highly technical structured attack plan.
 
