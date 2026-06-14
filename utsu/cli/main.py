@@ -12,11 +12,10 @@ from utsu.plugins.js_analysis.analyzer import JSAnalyzer
 from utsu.core.reporting import ReportManager
 
 try:
-    from utsu import utsu_rust_core # type: ignore
+    from utsu import utsu_rust_core
     RUST_CORE_ACTIVE = True
 except ImportError:
     RUST_CORE_ACTIVE = False
-    logging.warning("[!] uro_rust_core binary mapping missing in current environment setup.")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -25,6 +24,11 @@ def initialize_profile(profile_path: str):
     cfg.load_profile(profile_path)
 
 def cmd_scan(args):
+    if not RUST_CORE_ACTIVE:
+        print("\n[-] FATAL: Native Rust core (utsu_rust_core) is not installed or failed to load.")
+        print("[-] Please run ./install.sh to compile the extraction engine.")
+        sys.exit(1)
+
     initialize_profile(args.profile)
     cfg = ConfigManager()
     target_domain = args.target
@@ -141,13 +145,10 @@ def cmd_triage(args):
     agent = TriageAgent()
     reporter = ReportManager()
     
-    try:
-        report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
-        if report:
-            print(f"\n{report}")
-            reporter.save_triage_report(exact_url, report)
-    except Exception as e:
-        print(f"[-] Triage execution failed: {e}")
+    report = agent.run(web_service_id=ws_id, url=exact_url, scope_rules=scope_rules)
+    if report:
+        print(f"\n{report}")
+        reporter.save_triage_report(exact_url, report)
 
 def cmd_hunt(args):
     initialize_profile(args.profile)
@@ -190,7 +191,6 @@ def cmd_hunt(args):
                 print(f"{report}")
                 reporter.save_triage_report(exact_url, report)
             
-            # API Pacing to respect cloud infrastructure limits
             time.sleep(2.5)
             
         except RuntimeError as e:
@@ -203,7 +203,7 @@ def cmd_hunt(args):
             continue
 
 def main():
-    parser = argparse.ArgumentParser(description="Autonomous Offensive Security OS")
+    parser = argparse.ArgumentParser(description="Asymmetric Attack Surface Management Framework")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     scan_parser = subparsers.add_parser("scan")
@@ -224,9 +224,18 @@ def main():
     args = parser.parse_args()
     try:
         args.func(args)
+    except ValueError as e:
+        # Catch configuration errors (like missing API keys) and print cleanly
+        print(f"\n[-] CONFIGURATION ERROR: {e}")
+        sys.exit(1)
     except KeyboardInterrupt:
         print("\n[!] Execution interrupted by user. Exiting cleanly.")
         sys.exit(0)
+    except Exception as e:
+        # Catch unexpected fatal errors without dumping raw python tracebacks
+        print(f"\n[-] UNEXPECTED FATAL ERROR: {e}")
+        print("    Please ensure your environment is configured correctly.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
